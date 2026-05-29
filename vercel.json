@@ -1,14 +1,10 @@
 cat << 'EOF' > vercel.json
 {
-  "version": 2,
   "crons": [
     {
       "path": "/api/scrape",
       "schedule": "0 * * * *"
     }
-  ],
-  "routes": [
-    { "src": "/api/scrape", "dest": "/api/scrape.py" }
   ]
 }
 EOF
