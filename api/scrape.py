@@ -1,3 +1,4 @@
+cat << 'EOF' > api/scrape.py
 import os
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler
@@ -8,8 +9,9 @@ from google.genai import types
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return "Missing GEMINI_API_KEY configuration."
+        return "Missing GEMINI_API_KEY configuration on Vercel."
 
+    # Using New York as the base target region
     region = "newyork"
     search_query = "estate old antique"
     url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}&format=rss"
@@ -60,6 +62,7 @@ class handler(BaseHTTPRequestHandler):
         report = run_scraper_pipeline()
         print(report)
         self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
+        self.send_header('Content-type', 'text/plain; charset=utf-8')
         self.end_headers()
         self.wfile.write(f"Scraper Cron Executed Successfully.\n\n{report}".encode('utf-8'))
+EOF
