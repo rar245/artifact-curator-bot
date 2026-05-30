@@ -8,7 +8,7 @@ from google.genai import types
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
-    # 🐝 Ensure your real token is securely pasted inside these quotes!
+    # 🐝 Paste your raw ScrapingBee token inside these quotes
     bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
     if not api_key or bee_key == "54c8887115af4dd7b475a9f83dc571b02cf6d77956a":
@@ -27,20 +27,20 @@ def run_scraper_pipeline():
         if response.status_code == 200:
             html_content = response.text
             
-            # Universal parsing fallback: Find raw post hyperlinks and extract names from the URLs
-            raw_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/sss/d/[^"]+)"', html_content)
+            # Updated pattern: Target the raw anchor links inside the search layout
+            raw_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', html_content)
             
             # Deduplicate links
             unique_links = list(set(raw_links))
             
             for link in unique_links[:3]:
-                # Clean up the URL to extract a readable title string for Gemini
+                # Clean up the URL slug to guess a title (e.g., /d/vintage-antique-chair.html -> "Vintage Antique Chair")
                 url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
-                title_guess = url_slug.title()
+                title_guess = re.sub(r'^\d+\s*', '', url_slug).title() # strip listing ID numbers
                 
                 items_to_analyze.append({
                     "title": title_guess,
-                    "desc": "Live item listing captured from active search index.",
+                    "desc": "Live artifact discovered on the active search feed. Review link details for structural authentication.",
                     "link": link
                 })
     except Exception as e:
