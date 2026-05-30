@@ -14,7 +14,7 @@ def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
     # 🔐 Paste your SCRAMBLED base64 token string inside these quotes
-    scrambled_bee_token = "NTRjODg4NzExNWFmNGRkN2I0NzVhOWY4M2RjNTcxYjAyY2Y2ZDc3OTU2YQ=="
+    scrambled_bee_token = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
     try:
         bee_key = base64.b64decode(scrambled_bee_token).decode("utf-8")
