@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import json
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from PIL import Image
@@ -12,7 +13,7 @@ def run_scraper_pipeline():
     bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
     if not api_key or not bee_key:
-        return f"⚠️ Configuration Missing."
+        return f"⚠️ Configuration Missing: GEMINI_API_KEY={bool(api_key)}, SCRAPINGBEE_KEY={bool(bee_key)}"
 
     region = "longisland"
     search_query = "antique vintage estate"
@@ -45,8 +46,10 @@ def run_scraper_pipeline():
                 "is_demo": False
             })
 
-    # Demo Fallback Target
+    # Strict structural state isolation for Demo Fallback Target
+    is_running_demo = False
     if not items_to_check:
+        is_running_demo = True
         items_to_check = [{
             "title": "Industrial Mechanical Filter Press",
             "price": "$50",
@@ -59,6 +62,8 @@ def run_scraper_pipeline():
     Calculate value purely from structural clues, maker marks, material tells, or craftsmanship eras. Flag targets crossing 1000% ROI."""
 
     output_report = f"📸 VISUAL 1000% ROI APPRAISER ONLINE! Scouting {region} Classifieds...\n\n"
+    if is_running_demo:
+        output_report += "⚠️ No live regional links found right now. Running visual appraisal on a sample antique target:\n\n"
     
     for item in items_to_check:
         img_obj = None
@@ -77,19 +82,27 @@ def run_scraper_pipeline():
                 if detail_res.status_code == 200:
                     detail_html = detail_res.text
                     
-                    # 💡 Updated 2026 Strategy: Look for raw Craigslist image IDs inside data blocks or gallery strings
-                    # Craigslist image IDs typically look like 3_0x0_0 or random 3b0b777a80b... strings
-                    img_ids = re.findall(r'images\.craigslist\.org/([A-Za-z0-9_]+)', detail_html)
+                    # 💡 New 2026 Strategy: Extract the structured JSON block inside window.reproMedia
+                    media_json = re.search(r'window\.reproMedia\s*=\s*(\{.*?\});', detail_html)
+                    target_img_url = None
                     
-                    if not img_ids:
-                        # Secondary fallback extraction pattern looking for raw layout maps
-                        img_ids = re.findall(r'":"([0-9]:[A-Za-z0-9_]+)"', detail_html)
+                    if media_json:
+                        try:
+                            media_data = json.loads(media_json.group(1))
+                            # Drill down to find the highest resolution image string
+                            if "images" in media_data and len(media_data["images"]) > 0:
+                                target_img_url = media_data["images"][0].get("url")
+                        except Exception:
+                            pass
                     
-                    if img_ids:
-                        # Clean up prefixes if present (e.g., "1:" from "1:00M0M_k88XwOzloiz")
-                        clean_id = img_ids[0].split(':')[-1]
-                        target_img_url = f"https://images.craigslist.org/{clean_id}_600x450.jpg"
-                        
+                    # Regex backup patterns if script metadata structure shifts
+                    if not target_img_url:
+                        img_ids = re.findall(r'images\.craigslist\.org/([A-Za-z0-9_]+)', detail_html)
+                        if img_ids:
+                            clean_id = img_ids[0].split(':')[-1]
+                            target_img_url = f"https://images.craigslist.org/{clean_id}_600x450.jpg"
+
+                    if target_img_url:
                         raw_img = requests.get(target_img_url, timeout=15)
                         if raw_img.status_code == 200:
                             img_obj = Image.open(io.BytesIO(raw_img.content)).convert("RGB")
@@ -118,7 +131,8 @@ def run_scraper_pipeline():
             except Exception as e:
                 output_report += f"🔍 ITEM: {item['title']} -> Vision appraisal module failed: {str(e)}\n"
         else:
-            output_report += f"🔍 LIVE ITEM: {item['title']} (Asking: {item['price']})\nSkipped: Image gallery asset links unextractable.\n🔗 {item['link']}\n{'-'*40}\n"
+            label = "DEMO ITEM" if item["is_demo"] else "LIVE FIND"
+            output_report += f"🔍 [{label}]: {item['title']} (Asking: {item['price']})\nSkipped: Image gallery asset links unextractable.\n🔗 {item['link']}\n{'-'*40}\n"
 
     return output_report
 
