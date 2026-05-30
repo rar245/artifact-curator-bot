@@ -8,12 +8,11 @@ from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
+    # 🔐 Securely reading the token directly from Vercel's cloud environment keys
+    bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
-    # 🐝 Paste your raw ScrapingBee token inside these quotes
-    bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
-    
-    if not api_key or bee_key == "none":
-        return "⚠️ Configuration Missing."
+    if not api_key or not bee_key:
+        return f"⚠️ Configuration Missing: Check Vercel Environment Variables. GEMINI_API_KEY found: {bool(api_key)}, SCRAPINGBEE_KEY found: {bool(bee_key)}"
 
     region = "longisland"
     search_query = "antique vintage estate"
@@ -28,16 +27,13 @@ def run_scraper_pipeline():
     except Exception as e:
         print(f"Index fetch failed: {e}")
 
-    # Build the target list by matching links and prices from the HTML stream
     items_to_check = []
     if html_content:
-        # Match post URLs
         raw_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', html_content)
-        # Match prices (e.g., "$50")
         raw_prices = re.findall(r'(?:\$[0-9,]+)', html_content)
         
         unique_links = list(set(raw_links))
-        for i, link in enumerate(unique_links[:2]): # Scan top 2 items to protect free credits
+        for i, link in enumerate(unique_links[:2]): 
             price = raw_prices[i] if i < len(raw_prices) else "$Unknown"
             url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
             title_guess = re.sub(r'^\d+\s*', '', url_slug).title()
@@ -49,7 +45,6 @@ def run_scraper_pipeline():
                 "is_demo": False
             })
 
-    # 🔄 FIXED DEMO FALLBACK: Base64 asset formatting ensures 400 error never occurs
     if not items_to_check:
         items_to_check = [{
             "title": "Industrial Mechanical Filter Press",
@@ -58,7 +53,6 @@ def run_scraper_pipeline():
             "is_demo": True
         }]
 
-    # Initialize Gemini Appraiser Brain
     client = genai.Client(api_key=api_key)
     sys_instruction = """You are an expert antiquarian and museum art appraiser. Your exclusive job is to evaluate item images to discover misidentified, extremely rare objects being sold for a fraction of their true worth. 
     Calculate value purely from structural clues, maker marks, material tells, or craftsmanship eras. Flag targets crossing 1000% ROI."""
@@ -74,7 +68,6 @@ def run_scraper_pipeline():
             except Exception:
                 pass
         else:
-            # Click directly into the listing detail page to grab the high-resolution photo asset
             detail_api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={item['link']}&render_js=false"
             try:
                 detail_res = requests.get(detail_api_url, timeout=20)
@@ -86,7 +79,6 @@ def run_scraper_pipeline():
                 output_report += f"Error connecting to subpage layout: {e}\n"
 
         if img_data:
-            # 💡 FIX: Safely convert image stream to base64 string to clear the 400 API block
             b64_image = base64.b64encode(img_data).decode("utf-8")
             
             prompt = f"""Review the item photo for listing: '{item['title']}' being sold at an asking price of: {item['price']}.
