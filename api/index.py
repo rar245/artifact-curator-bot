@@ -7,25 +7,31 @@ from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
-    proxy_url = os.environ.get("PROXY_URL") # Grab the proxy securely
+    proxy_url = os.environ.get("PROXY_URL")
     
     if not api_key:
         return "Missing GEMINI_API_KEY configuration on Vercel."
 
-    region = "newyork"
+    # Switching to a slightly less aggressive Craigslist region for testing
+    region = "vermont"
     search_query = "estate old antique"
     url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}&format=rss"
     
-    # Configure the proxy dictionaries if a key exists
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    # Ensure proxies are explicitly mapped for both HTTP and HTTPS protocols
+    proxies = None
+    if proxy_url:
+        proxies = {
+            "http": proxy_url,
+            "https": proxy_url
+        }
     
     try:
-        # Pass the proxies map right into the requests call
-        response = requests.get(url, impersonate="chrome", proxies=proxies, timeout=10)
+        # Use chrome impersonation + our proxy configuration
+        response = requests.get(url, impersonate="chrome", proxies=proxies, timeout=15)
         if response.status_code != 200:
-            return f"Craigslist blocked request with status code: {response.status_code}. (Proxy Active: {bool(proxy_url)})"
+            return f"Craigslist blocked request with status code: {response.status_code}. Proxy Configured: {bool(proxy_url)}"
     except Exception as e:
-        return f"Network error: {str(e)}"
+        return f"Network connection error: {str(e)}. Proxy Status: {bool(proxy_url)}"
 
     namespaces = {'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', 'default': 'http://purl.org/rss/1.0/'}
     try:
@@ -35,9 +41,9 @@ def run_scraper_pipeline():
         return f"XML Parsing Error: {str(e)}"
 
     if not items:
-        return "No new listings found in this feed update."
+        return f"Connected successfully to {region}, but no new listings matched your keywords right now."
 
-    output_report = f"Scraped {len(items)} items. Live Artifact Analysis:\n\n"
+    output_report = f"🚀 SUCCESS! Connected to {region} feed. Analyzing top items:\n\n"
     
     client = genai.Client(api_key=api_key)
     sys_instruction = "You are an expert museum curator. Identify rare, historically significant artifacts misidentified by oblivious sellers."
