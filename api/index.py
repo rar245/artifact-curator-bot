@@ -1,6 +1,5 @@
 import os
 import re
-import base64
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from google import genai
@@ -45,6 +44,7 @@ def run_scraper_pipeline():
                 "is_demo": False
             })
 
+    # Demo Fallback Target
     if not items_to_check:
         items_to_check = [{
             "title": "Industrial Mechanical Filter Press",
@@ -53,6 +53,7 @@ def run_scraper_pipeline():
             "is_demo": True
         }]
 
+    # Initialize Gemini Appraiser Brain
     client = genai.Client(api_key=api_key)
     sys_instruction = """You are an expert antiquarian and museum art appraiser. Your exclusive job is to evaluate item images to discover misidentified, extremely rare objects being sold for a fraction of their true worth. 
     Calculate value purely from structural clues, maker marks, material tells, or craftsmanship eras. Flag targets crossing 1000% ROI."""
@@ -68,6 +69,7 @@ def run_scraper_pipeline():
             except Exception:
                 pass
         else:
+            # Click directly into the listing detail page to grab the high-resolution photo asset
             detail_api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={item['link']}&render_js=false"
             try:
                 detail_res = requests.get(detail_api_url, timeout=20)
@@ -79,8 +81,6 @@ def run_scraper_pipeline():
                 output_report += f"Error connecting to subpage layout: {e}\n"
 
         if img_data:
-            b64_image = base64.b64encode(img_data).decode("utf-8")
-            
             prompt = f"""Review the item photo for listing: '{item['title']}' being sold at an asking price of: {item['price']}.
             Examine the photo for physical evidence proving this object is an authentic historical asset worth over 1000% of this price.
             
@@ -91,10 +91,11 @@ def run_scraper_pipeline():
             VISUAL PROOF: [Provide 1-2 analytical sentences identifying specific design traits, era, maker marks, or material composition seen in the image]"""
             
             try:
+                # 💡 FIX: Feeding raw network content bytes directly into data solves the encoding error
                 ai_res = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[
-                        types.Part.from_bytes(data=base64.b64decode(b64_image), mime_type="image/jpeg"),
+                        types.Part.from_bytes(data=img_data, mime_type="image/jpeg"),
                         prompt
                     ],
                     config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
