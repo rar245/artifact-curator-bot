@@ -16,7 +16,7 @@ def run_scraper_pipeline():
 
     # Target the main gallery view search endpoint
     region = "vermont"
-    search_query = "estate old antique"
+    search_query = "table tool vintage"
     target_url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
     
     api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={target_url}&render_js=false"
