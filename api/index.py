@@ -10,7 +10,7 @@ def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
     # 🐝 Paste your raw ScrapingBee token inside these quotes
-    bee_key = "PASTE_YOUR_ACTUAL_SCRAPINGBEE_TOKEN_HERE"
+    bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
     if not api_key or bee_key == "none":
         return "⚠️ Configuration Missing."
