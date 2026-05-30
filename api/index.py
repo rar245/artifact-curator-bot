@@ -10,7 +10,7 @@ from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
-    bee_key = os.environ.get("SCRAPINGBEE_KEY")
+    bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
     # 💡 IF YOU CHOOSE STRATEGY 1: Paste your published Google Sheet CSV link here
     google_sheet_csv_url = "none"
