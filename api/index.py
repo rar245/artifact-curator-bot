@@ -16,7 +16,7 @@ def run_scraper_pipeline():
         return f"⚠️ Configuration Missing: GEMINI_API_KEY={bool(api_key)}, SCRAPINGBEE_KEY={bool(bee_key)}"
 
     region = "longisland"
-    search_query = "antique vintage estate"
+    search_query = "vintage coins"
     target_url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
     api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={target_url}&render_js=false"
     
