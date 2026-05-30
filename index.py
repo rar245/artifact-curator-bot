@@ -13,7 +13,7 @@ from google.genai import types
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
-    # 🔐 Paste your SCRAMBLED base64 token string from step 1 inside these quotes
+    # 🔐 Paste your SCRAMBLED base64 token string inside these quotes
     scrambled_bee_token = "NTRjODg4NzExNWFmNGRkN2I0NzVhOWY4M2RjNTcxYjAyY2Y2ZDc3OTU2YQ=="
     
     try:
@@ -25,11 +25,12 @@ def run_scraper_pipeline():
         return f"⚠️ Setup incomplete. Make sure GEMINI_API_KEY is active in Vercel and your encoded ScrapingBee token is pasted into line 16 of GitHub!"
 
     region = "longisland"
-    # Target Craigslist's hidden backend data stream directly (Bypasses rendering failures)
+    # Target the primary classified backend data query stream endpoint
     raw_target_url = f"https://webapi.craigslist.org/webapi/v1/search/search?cl_category=gms&areaSubdomain={region}&lang=en"
     encoded_target = urllib.parse.quote_plus(raw_target_url)
     
-    api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={encoded_target}&render_js=false"
+    # 💡 FIX: Changing parameter string '?key=' to '?api_key=' satisfies ScrapingBee's structural constraint
+    api_url = f"https://app.scrapingbee.com/api/v1/?api_key={bee_key}&url={encoded_target}&render_js=false"
     
     output_report = f"📸 HIGH-THROUGHPUT VISUAL SCANNER ONLINE ({region} Moving/Estate Category Stream)...\n\n"
     
@@ -37,6 +38,8 @@ def run_scraper_pipeline():
         response = requests.get(api_url, timeout=25)
         if response.status_code == 200:
             parsed_json = response.json()
+            
+            # Drill cleanly into the nested JSON objects returned by Craigslist's data pool
             data_items = parsed_json.get("data", {}).get("items", [])
             
             if not data_items:
@@ -47,18 +50,19 @@ def run_scraper_pipeline():
 
             items_processed = 0
             for item in data_items:
-                if items_processed >= 4: 
+                if items_processed >= 4: # Limit visual analysis to top 4 listings to manage rate usage
                     break
                     
                 title = item.get("title", "Unknown Item")
                 price = f"${item.get('price', '0')}"
                 posting_id = item.get("id")
                 
+                # Craigslist data schema packages internal photo identifiers inside a string block
                 image_string = item.get("images", "")
                 if not image_string:
                     continue
                     
-                # Deconstruct image sequence mapping strings
+                # Extract the primary image hash token sequence
                 first_img_id = image_string.split(',')[0].replace('1:', '')
                 img_url = f"https://images.craigslist.org/{first_img_id}_300x300.jpg"
                 link = f"https://{region}.craigslist.org/gms/d/listings/{posting_id}.html"
@@ -66,6 +70,7 @@ def run_scraper_pipeline():
                 try:
                     img_res = requests.get(img_url, timeout=10)
                     if img_res.status_code == 200:
+                        # Normalize image dimensions cleanly via Pillow middleware
                         img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
                         
                         prompt = f"Analyze the visual structure of this item listing: '{title}' being sold for {price}. Does it possess historical hallmarks, maker characteristics, or material compositions indicating it is worth >1000% of its current value? Reply strictly as: ROI POTENTIAL: [High/Low] - REASON: [1 sentence]."
