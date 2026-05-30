@@ -8,67 +8,87 @@ from google.genai import types
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
-    # 🐝 Paste your raw ScrapingBee token inside these quotes
+    # 🐝 Keep your ScrapingBee token pasted here
     bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
     if not api_key or bee_key == "none":
-        return "⚠️ Configuration Missing: Make sure GEMINI_API_KEY is in Vercel, and paste your raw ScrapingBee token into line 11 of the GitHub code!"
+        return "⚠️ Configuration Missing."
 
-    # Target the main gallery view search endpoint
-    region = "long island"
-    search_query = "table tool vintage"
+    # 🗺️ Target Region set to Long Island, NY
+    region = "longisland"
+    search_query = "antique vintage estate"
     target_url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
-    
     api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={target_url}&render_js=false"
     
-    items_to_analyze = []
+    post_links = []
     try:
         response = requests.get(api_url, timeout=25)
         if response.status_code == 200:
-            html_content = response.text
-            
-            # Updated pattern: Target the raw anchor links inside the search layout
-            raw_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', html_content)
-            
-            # Deduplicate links
-            unique_links = list(set(raw_links))
-            
-            for link in unique_links[:3]:
-                # Clean up the URL slug to guess a title (e.g., /d/vintage-antique-chair.html -> "Vintage Antique Chair")
-                url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
-                title_guess = re.sub(r'^\d+\s*', '', url_slug).title() # strip listing ID numbers
-                
-                items_to_analyze.append({
-                    "title": title_guess,
-                    "desc": "Live artifact discovered on the active search feed. Review link details for structural authentication.",
-                    "link": link
-                })
+            # Grab real listing links from the main Long Island index
+            post_links = list(set(re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', response.text)))
     except Exception as e:
-        print(f"Proxy bridge failure: {e}")
+        print(f"Index fetch failed: {e}")
 
-    # Fallback data to protect API runtime ONLY if the region literally has 0 matches today
-    if not items_to_analyze:
-        items_to_analyze = [
-            {"title": "Old heavy metal sword - $40", "desc": "Found this clearing out my grandpas old garage trunk. It has some rusty looking engravings near the handle and some weird Roman numerals (MDCCXCI maybe?). Very heavy, could use a good polish.", "link": "#"},
-            {"title": "Ancient dusty book with leather cover - $25", "desc": "Selling an old leather bound book. Pages are yellowed. Looks like it is written in old Latin or something. Dated 1724 on the first page.", "link": "#"}
-        ]
-
-    # === RUN GEMINI BRAIN EVALUATION ===
-    output_report = f"📡 PIPELINE OPERATIONAL! Analyzing findings for keywords in {region}:\n\n"
+    # Initialize Gemini
     client = genai.Client(api_key=api_key)
-    sys_instruction = "You are an expert museum curator. Identify rare, historically significant artifacts misidentified by oblivious sellers."
+    sys_instruction = """You are an expert antiquarian and museum appraiser. Your job is to analyze item photos to spot misidentified, highly valuable items being sold for under 10% of their true value (>1000% ROI). 
+    Look for makers marks, structural tells, specific historical patterns, or material telltales that the seller missed."""
+
+    output_report = f"📸 VISUAL APPRAISER ONLINE! Scanning top listings in {region}...\n\n"
     
-    for item in items_to_analyze:
-        prompt = f"Analyze this item:\nTitle: {item['title']}\nDescription: {item['desc']}\n\nProvide output EXACTLY as:\nSCORE: [1-10]\nREASON: [1-2 sentences]"
+    # If Craigslist has 0 matches today, run a live demo using a real web image so you can see it appraise
+    if not post_links:
+        output_report += "⚠️ No live regional links found right now. Running visual appraisal on a sample antique target:\n\n"
+        demo_img = "https://upload.wikimedia.org/wikipedia/commons/e/e5/Imperial_Filter_Press_Markham_%26_Co.jpg"
+        prompt = "Analyze this machine part image. What is its estimated historical value if found on an estate sale for $50? Does it cross 1000% ROI? Respond EXACTLY as:\nPROBABLE ROI: [X%]\nVISUAL EVIDENCE: [1-2 sentences]"
+        
         try:
+            img_response = requests.get(demo_img)
             ai_res = client.models.generate_content(
                 model='gemini-2.5-flash',
-                contents=prompt,
+                contents=[
+                    types.Part.from_bytes(data=img_response.content, mime_type="image/jpeg"),
+                    prompt
+                ],
                 config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.2)
             )
-            output_report += f"🔍 ITEM: {item['title']}\n{ai_res.text}\n🔗 {item['link']}\n{'-'*30}\n"
+            output_report += f"🔍 TARGET: Vintage Industrial Machinery\n{ai_res.text}\n🔗 Demo Link\n{'-'*30}\n"
         except Exception as e:
-            output_report += f"🔍 ITEM: {item['title']}\nAI Processing Halt: {str(e)}\n\n"
+            output_report += f"AI Image Processing error: {e}"
+        return output_report
+
+    # Process the top live listings found on Long Island
+    for link in post_links[:2]: # Checking 2 listings to protect your free credits
+        url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
+        title_guess = re.sub(r'^\d+\s*', '', url_slug).title()
+        
+        # Click into the individual post using ScrapingBee to find the high-res images
+        detail_api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={link}&render_js=false"
+        try:
+            detail_res = requests.get(detail_api_url, timeout=20)
+            if detail_res.status_code == 200:
+                # Find the first high-res JPEG photo link in the post's gallery layout
+                img_urls = re.findall(r'src="(https://images\.craigslist\.org/[^"]+\d+x\d+\.jpg)"', detail_res.text)
+                
+                if img_urls:
+                    target_img = img_urls[0]
+                    img_data = requests.get(target_img, timeout=10).content
+                    
+                    prompt = f"Analyze the item image for listing: '{title_guess}'. Look closely for signs it is worth over 1000% of a typical casual asking price. Provide output EXACTLY as:\nPROBABLE ROI: [Estimated % or Low]\nVISUAL EVIDENCE: [1-2 sentences identifying maker marks, materials, or style context]"
+                    
+                    ai_res = client.models.generate_content(
+                        model='gemini-2.5-flash',
+                        contents=[
+                            types.Part.from_bytes(data=img_data, mime_type="image/jpeg"),
+                            prompt
+                        ],
+                        config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.2)
+                    )
+                    output_report += f"🔍 LIVE ITEM: {title_guess}\n{ai_res.text}\n🔗 {link}\n{'-'*30}\n"
+                else:
+                    output_report += f"🔍 LIVE ITEM: {title_guess}\nSkipped: No images found inside listing.\n🔗 {link}\n{'-'*30}\n"
+        except Exception as e:
+            output_report += f"Error analyzing {title_guess}: {str(e)}\n"
 
     return output_report
 
