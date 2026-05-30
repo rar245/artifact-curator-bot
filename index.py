@@ -1,9 +1,6 @@
 import os
 import re
 import io
-import json
-import base64
-import urllib.parse
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from PIL import Image
@@ -13,84 +10,86 @@ from google.genai import types
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
     
-    # 🔐 Paste your SCRAMBLED base64 token string inside these quotes
-    scrambled_bee_token = "QR8CR8IYUG1FB78DDAL1Y9H1BLWTQD28MID9YS0HRV96MY5PBT7QYF7YXAOQCGBL81JKVI0Y5V3YTTLH"
-    
-    try:
-        bee_key = base64.b64decode(scrambled_bee_token).decode("utf-8")
-    except Exception:
-        bee_key = ""
+    if not api_key:
+        return "⚠️ Configuration Missing: GEMINI_API_KEY environment variable not found on Vercel."
 
-    if not api_key or "PASTE" in scrambled_bee_token or not bee_key:
-        return f"⚠️ Setup incomplete. Make sure GEMINI_API_KEY is active in Vercel and your encoded ScrapingBee token is pasted into line 16 of GitHub!"
-
+    # 🗺️ Target the official, unblocked RSS Feed for Long Island Garage / Moving / Estate Sales
     region = "longisland"
-    # Target the primary classified backend data query stream endpoint
-    raw_target_url = f"https://webapi.craigslist.org/webapi/v1/search/search?cl_category=gms&areaSubdomain={region}&lang=en"
-    encoded_target = urllib.parse.quote_plus(raw_target_url)
+    rss_url = f"https://{region}.craigslist.org/search/gms?format=rss"
     
-    # 💡 FIX: Changing parameter string '?key=' to '?api_key=' satisfies ScrapingBee's structural constraint
-    api_url = f"https://app.scrapingbee.com/api/v1/?api_key={bee_key}&url={encoded_target}&render_js=false"
-    
-    output_report = f"📸 HIGH-THROUGHPUT VISUAL SCANNER ONLINE ({region} Moving/Estate Category Stream)...\n\n"
+    output_report = f"📸 BULLETPROOF VISUAL SCANNER ONLINE ({region} Garage & Moving Sale Stream)...\n\n"
     
     try:
-        response = requests.get(api_url, timeout=25)
+        # Fetching directly from the public RSS feed avoids proxy layers completely
+        response = requests.get(rss_url, timeout=20)
         if response.status_code == 200:
-            parsed_json = response.json()
+            xml_content = response.text
             
-            # Drill cleanly into the nested JSON objects returned by Craigslist's data pool
-            data_items = parsed_json.get("data", {}).get("items", [])
+            # Extract live post elements using clean text boundaries
+            items = xml_content.split('<item')[1:]
             
-            if not data_items:
-                return output_report + "⚠️ Live data stream accessed successfully, but 0 active listings were returned by the server at this time."
+            if not items:
+                return output_report + "📡 Feed loaded successfully, but zero active listings are posted right now. Re-scan shortly!"
 
             client = genai.Client(api_key=api_key)
             sys_instruction = "You are an antiquarian expert. Review item images to flag misidentified treasures worth >1000% of standard yard-sale prices."
 
             items_processed = 0
-            for item in data_items:
-                if items_processed >= 4: # Limit visual analysis to top 4 listings to manage rate usage
+            for item in items:
+                if items_processed >= 4: # Limit visual evaluations to top 4 to manage API usage
                     break
-                    
-                title = item.get("title", "Unknown Item")
-                price = f"${item.get('price', '0')}"
-                posting_id = item.get("id")
                 
-                # Craigslist data schema packages internal photo identifiers inside a string block
-                image_string = item.get("images", "")
-                if not image_string:
+                # Clean text extraction for link, title, and images from the RSS block
+                link_match = re.search(r'<link>(.*?)</link>', item)
+                title_match = re.search(r'<title>(.*?)</title>', item)
+                img_match = re.search(r'enc:encstring="([A-Za-z0-9_]+)"', item) # Grabs the raw image token
+                
+                if not link_match or not title_match:
                     continue
                     
-                # Extract the primary image hash token sequence
-                first_img_id = image_string.split(',')[0].replace('1:', '')
-                img_url = f"https://images.craigslist.org/{first_img_id}_300x300.jpg"
-                link = f"https://{region}.craigslist.org/gms/d/listings/{posting_id}.html"
+                link = link_match.group(1).strip()
+                title = title_match.group(1).strip()
+                
+                # Clean up pricing layouts if present in the RSS title string (e.g. "Vintage Desk - $40")
+                price_search = re.search(r'\$(\d+)', title)
+                price = f"${price_search.group(1)}" if price_search else "$Unpriced"
+                
+                # Reconstruct the direct photo image URL if a token exists
+                img_url = None
+                if img_match:
+                    img_id = img_match.group(1)
+                    img_url = f"https://images.craigslist.org/{img_id}_300x300.jpg"
+                else:
+                    # Secondary regex check looking for raw media asset tags inside the XML structure
+                    media_match = re.search(r'url="(https://images\.craigslist\.org/[^"]+)"', item)
+                    if media_match:
+                        img_url = media_match.group(1)
 
-                try:
-                    img_res = requests.get(img_url, timeout=10)
-                    if img_res.status_code == 200:
-                        # Normalize image dimensions cleanly via Pillow middleware
-                        img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
-                        
-                        prompt = f"Analyze the visual structure of this item listing: '{title}' being sold for {price}. Does it possess historical hallmarks, maker characteristics, or material compositions indicating it is worth >1000% of its current value? Reply strictly as: ROI POTENTIAL: [High/Low] - REASON: [1 sentence]."
-                        
-                        ai_res = client.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=[img_obj, prompt],
-                            config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
-                        )
-                        
-                        if "High" in ai_res.text:
-                            output_report += f"🔥 HIGH ROI TARGET DISCOVERED:\n📦 {title} ({price})\n📊 {ai_res.text}\n🔗 Link: {link}\n{'-'*40}\n"
-                        else:
-                            output_report += f"📁 Scanned: {title} ({price}) -> Low ROI potential detected.\n"
-                        
-                        items_processed += 1
-                except Exception:
-                    pass
+                if img_url:
+                    try:
+                        img_res = requests.get(img_url, timeout=10)
+                        if img_res.status_code == 200:
+                            # Normalize picture matrix shapes via Pillow
+                            img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
+                            
+                            prompt = f"Analyze the visual structure of this item listing: '{title}' being sold for {price}. Does it possess historical hallmarks, maker characteristics, or material compositions indicating it is worth >1000% of its current value? Reply strictly as: ROI POTENTIAL: [High/Low] - REASON: [1 sentence]."
+                            
+                            ai_res = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=[img_obj, prompt],
+                                config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
+                            )
+                            
+                            if "High" in ai_res.text:
+                                output_report += f"🔥 HIGH ROI TARGET DISCOVERED:\n📦 {title}\n📊 {ai_res.text}\n🔗 Link: {link}\n{'-'*40}\n"
+                            else:
+                                output_report += f"📁 Scanned: {title} -> Low ROI potential detected.\n"
+                            
+                            items_processed += 1
+                    except Exception:
+                        pass
         else:
-            output_report += f"API Feed Refused: HTTP Status {response.status_code} - Text: {response.text[:200]}\n"
+            output_report += f"Craigslist Data Stream Unavailable: HTTP Status {response.status_code}\n"
     except Exception as e:
         output_report += f"Pipeline Execution Interrupted: {e}\n"
 
