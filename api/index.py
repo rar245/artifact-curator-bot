@@ -1,5 +1,6 @@
 import os
-import re
+import csv
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from google import genai
@@ -7,55 +8,65 @@ from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
-    proxy_url = os.environ.get("PROXY_URL")
+    bee_key = os.environ.get("SCRAPINGBEE_KEY")
+    
+    # 💡 IF YOU CHOOSE STRATEGY 1: Paste your published Google Sheet CSV link here
+    google_sheet_csv_url = "PASTE_YOUR_GOOGLE_CSV_URL_HERE"
     
     if not api_key:
         return "Missing GEMINI_API_KEY configuration on Vercel."
 
-    # Using standard HTML layout endpoint
-    region = "vermont"
-    search_query = "estate old antique"
-    url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
-    
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    
-    try:
-        # Requesting standard HTML layouts using an updated Chrome desktop footprint
-        response = requests.get(url, impersonate="chrome110", proxies=proxies, timeout=15)
-        if response.status_code != 200:
-            return f"HTML Sync Paused. Status code: {response.status_code}. Proxy Connected: {bool(proxy_url)}"
-    except Exception as e:
-        return f"Network sync failure: {str(e)}"
+    items_to_analyze = []
 
-    # Parse basic listings from HTML using clean text regular expressions
-    html_content = response.text
-    titles = re.findall(r'class="posting-title"[^>]*>(.*?)<\/a>', html_content)
-    links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[^"]+)" class="posting-title"', html_content)
+    # === METHOD A: USE FREE SCRAPINGBEE PROXY IF KEY EXISTS ===
+    if bee_key:
+        target_url = "https://vermont.craigslist.org/search/sss?query=estate+old+antique&format=rss"
+        api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={target_url}&render_js=false"
+        try:
+            response = requests.get(api_url, timeout=20)
+            if response.status_code == 200:
+                namespaces = {'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', 'default': 'http://purl.org/rss/1.0/'}
+                root = ET.fromstring(response.content)
+                for item in root.findall('.//default:item', namespaces)[:3]:
+                    items_to_analyze.append({
+                        "title": item.find('default:title', namespaces).text or "Untitled",
+                        "desc": item.find('default:description', namespaces).text or "No Desc",
+                        "link": item.find('default:link', namespaces).text or ""
+                    })
+        except Exception as e:
+            print(f"ScrapingBee failed: {e}")
 
-    # Fallback to Mock Data to let you see your Gemini brain work if Craigslist is still blocking the IP
-    if not titles:
-        output_report = f"⚠️ Network block detected (403 or empty HTML parsing). Running Mock Pipeline to verify Gemini Brain...\n\n"
-        items_to_analyze = [
-            {"title": "Old heavy metal sword - $40", "desc": "Found this clearing out my grandpas old garage trunk. It has some rusty looking engravings near the handle and some weird Roman numerals (MDCCXCI maybe?). Very heavy, could use a good polish. Just want it gone. Cash only.", "link": "#"},
-            {"title": "Ancient dusty book with leather cover - $25", "desc": "Selling an old leather bound book. Pages are yellowed and some are loose. Looks like it is written in old Latin or something. Dated 1724 on the first page. Found in a box from an estate sale.", "link": "#"}
-        ]
-    else:
-        output_report = f"📡 SUCCESS! Pulled live HTML data from {region}. Processing findings...\n\n"
-        items_to_analyze = []
-        for i in range(min(3, len(titles))):
-            items_to_analyze.append({
-                "title": titles[i].strip(),
-                "desc": "Live item listing detail parsed from HTML search indexing.",
-                "link": links[i] if i < len(links) else ""
-            })
+    # === METHOD B: FALLBACK TO THE GOOGLE SHEETS SHIELD ===
+    if not items_to_analyze and "http" in google_sheet_csv_url:
+        try:
+            res = requests.get(google_sheet_csv_url, timeout=15)
+            if res.status_code == 200:
+                lines = res.text.splitlines()
+                reader = csv.reader(lines)
+                next(reader) # Skip header row
+                for row in reader:
+                    if len(row) >= 2:
+                        items_to_analyze.append({
+                            "title": row[0], # Column A: Title
+                            "desc": row[1],  # Column B: Summary/Description
+                            "link": row[2] if len(row) > 2 else "" # Column C: Link
+                        })
+                    if len(items_to_analyze) >= 3:
+                        break
+        except Exception as e:
+            print(f"Google Sheet fallback failed: {e}")
 
-    # Initialize the Gemini Curator client
+    # === METHOD C: MOCK FALLBACK ONLY IF PLUGINS FAIL ===
+    if not items_to_analyze:
+        return "⚠️ Setup Pending: Please plug your Google Sheet CSV URL into line 13 of github code or add your free ScrapingBee Key to Vercel settings!"
+
+    # === INITIALIZE GEMINI BRAIN ===
+    output_report = "📡 DATA STREAM MATCH! Running Gemini Antiquarian Intelligence Engine:\n\n"
     client = genai.Client(api_key=api_key)
     sys_instruction = "You are an expert museum curator. Identify rare, historically significant artifacts misidentified by oblivious sellers."
     
     for item in items_to_analyze:
         prompt = f"Analyze this item:\nTitle: {item['title']}\nDescription: {item['desc']}\n\nProvide output EXACTLY as:\nSCORE: [1-10]\nREASON: [1-2 sentences]"
-        
         try:
             ai_res = client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -64,7 +75,7 @@ def run_scraper_pipeline():
             )
             output_report += f"🔍 ITEM: {item['title']}\n{ai_res.text}\n🔗 {item['link']}\n{'-'*30}\n"
         except Exception as e:
-            output_report += f"🔍 ITEM: {item['title']}\nAI Analysis Paused: {str(e)}\n\n"
+            output_report += f"🔍 ITEM: {item['title']}\nAI Processing Interrupted: {str(e)}\n\n"
 
     return output_report
 
