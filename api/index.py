@@ -1,3 +1,5 @@
+# Active ScrapingBee Proxy Tunnel Build Loaded
+
 import os
 import csv
 import xml.etree.ElementTree as ET
@@ -11,7 +13,7 @@ def run_scraper_pipeline():
     bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
     # 💡 IF YOU CHOOSE STRATEGY 1: Paste your published Google Sheet CSV link here
-    google_sheet_csv_url = "https://docs.google.com/spreadsheets/d/153CmaM9StdE2zVqL14PWAQLxNzTNYbXFVoswCogQ0xw/edit?gid=0#gid=0"
+    google_sheet_csv_url = "none"
     
     if not api_key:
         return "Missing GEMINI_API_KEY configuration on Vercel."
