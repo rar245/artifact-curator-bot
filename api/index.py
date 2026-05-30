@@ -15,7 +15,7 @@ def run_scraper_pipeline():
         return "⚠️ Configuration Missing: Make sure GEMINI_API_KEY is in Vercel, and paste your raw ScrapingBee token into line 11 of the GitHub code!"
 
     # Target the main gallery view search endpoint
-    region = "vermont"
+    region = "long island"
     search_query = "table tool vintage"
     target_url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
     
