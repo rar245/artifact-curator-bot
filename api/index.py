@@ -7,6 +7,8 @@ from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
+    proxy_url = os.environ.get("PROXY_URL") # Grab the proxy securely
+    
     if not api_key:
         return "Missing GEMINI_API_KEY configuration on Vercel."
 
@@ -14,10 +16,14 @@ def run_scraper_pipeline():
     search_query = "estate old antique"
     url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}&format=rss"
     
+    # Configure the proxy dictionaries if a key exists
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    
     try:
-        response = requests.get(url, impersonate="chrome", timeout=10)
+        # Pass the proxies map right into the requests call
+        response = requests.get(url, impersonate="chrome", proxies=proxies, timeout=10)
         if response.status_code != 200:
-            return f"Craigslist blocked request with status code: {response.status_code}"
+            return f"Craigslist blocked request with status code: {response.status_code}. (Proxy Active: {bool(proxy_url)})"
     except Exception as e:
         return f"Network error: {str(e)}"
 
