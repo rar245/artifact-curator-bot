@@ -11,7 +11,7 @@ def run_scraper_pipeline():
     # 🐝 Paste your raw ScrapingBee token inside these quotes
     bee_key = "54c8887115af4dd7b475a9f83dc571b02cf6d77956a"
     
-    if not api_key or bee_key == "54c8887115af4dd7b475a9f83dc571b02cf6d77956a":
+    if not api_key or bee_key == "none":
         return "⚠️ Configuration Missing: Make sure GEMINI_API_KEY is in Vercel, and paste your raw ScrapingBee token into line 11 of the GitHub code!"
 
     # Target the main gallery view search endpoint
