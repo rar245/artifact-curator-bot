@@ -1,10 +1,7 @@
 import os
 import re
-import io
-import json
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
-from PIL import Image
 from google import genai
 from google.genai import types
 
@@ -13,126 +10,67 @@ def run_scraper_pipeline():
     bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
     if not api_key or not bee_key:
-        return f"⚠️ Configuration Missing: GEMINI_API_KEY={bool(api_key)}, SCRAPINGBEE_KEY={bool(bee_key)}"
+        return "⚠️ Configuration Missing: Check Vercel Keys."
 
+    # 🗺️ Target the RAW garage/estate sale category grid directly (high volume)
     region = "longisland"
-    search_query = "vintage coins"
-    target_url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
+    target_url = f"https://{region}.craigslist.org/search/gms" 
     api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={target_url}&render_js=false"
     
-    html_content = ""
+    output_report = f"📸 HIGH-THROUGHPUT VISUAL SCANNER ONLINE ({region} Garage/Estate Category)...\n\n"
+    
     try:
         response = requests.get(api_url, timeout=25)
         if response.status_code == 200:
-            html_content = response.text
-    except Exception as e:
-        print(f"Index fetch failed: {e}")
-
-    items_to_check = []
-    if html_content:
-        raw_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', html_content)
-        raw_prices = re.findall(r'(?:\$[0-9,]+)', html_content)
-        
-        unique_links = list(set(raw_links))
-        for i, link in enumerate(unique_links[:2]): 
-            price = raw_prices[i] if i < len(raw_prices) else "$Unknown"
-            url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
-            title_guess = re.sub(r'^\d+\s*', '', url_slug).title()
+            html = response.text
             
-            items_to_check.append({
-                "title": title_guess,
-                "price": price,
-                "link": link,
-                "is_demo": False
-            })
-
-    # Strict structural state isolation for Demo Fallback Target
-    is_running_demo = False
-    if not items_to_check:
-        is_running_demo = True
-        items_to_check = [{
-            "title": "Industrial Mechanical Filter Press",
-            "price": "$50",
-            "link": "https://upload.wikimedia.org/wikipedia/commons/e/e5/Imperial_Filter_Press_Markham_%26_Co.jpg",
-            "is_demo": True
-        }]
-
-    client = genai.Client(api_key=api_key)
-    sys_instruction = """You are an expert antiquarian and museum art appraiser. Your exclusive job is to evaluate item images to discover misidentified, extremely rare objects being sold for a fraction of their true worth. 
-    Calculate value purely from structural clues, maker marks, material tells, or craftsmanship eras. Flag targets crossing 1000% ROI."""
-
-    output_report = f"📸 VISUAL 1000% ROI APPRAISER ONLINE! Scouting {region} Classifieds...\n\n"
-    if is_running_demo:
-        output_report += "⚠️ No live regional links found right now. Running visual appraisal on a sample antique target:\n\n"
-    
-    for item in items_to_check:
-        img_obj = None
-        
-        if item["is_demo"]:
-            try:
-                img_res = requests.get(item["link"], timeout=15)
-                if img_res.status_code == 200:
-                    img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
-            except Exception as e:
-                print(f"Demo image load failed: {e}")
-        else:
-            detail_api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={item['link']}&render_js=false"
-            try:
-                detail_res = requests.get(detail_api_url, timeout=20)
-                if detail_res.status_code == 200:
-                    detail_html = detail_res.text
-                    
-                    # 💡 New 2026 Strategy: Extract the structured JSON block inside window.reproMedia
-                    media_json = re.search(r'window\.reproMedia\s*=\s*(\{.*?\});', detail_html)
-                    target_img_url = None
-                    
-                    if media_json:
-                        try:
-                            media_data = json.loads(media_json.group(1))
-                            # Drill down to find the highest resolution image string
-                            if "images" in media_data and len(media_data["images"]) > 0:
-                                target_img_url = media_data["images"][0].get("url")
-                        except Exception:
-                            pass
-                    
-                    # Regex backup patterns if script metadata structure shifts
-                    if not target_img_url:
-                        img_ids = re.findall(r'images\.craigslist\.org/([A-Za-z0-9_]+)', detail_html)
-                        if img_ids:
-                            clean_id = img_ids[0].split(':')[-1]
-                            target_img_url = f"https://images.craigslist.org/{clean_id}_600x450.jpg"
-
-                    if target_img_url:
-                        raw_img = requests.get(target_img_url, timeout=15)
-                        if raw_img.status_code == 200:
-                            img_obj = Image.open(io.BytesIO(raw_img.content)).convert("RGB")
-            except Exception as e:
-                output_report += f"Error connecting to subpage layout: {e}\n"
-
-        if img_obj:
-            prompt = f"""Review the item photo for listing: '{item['title']}' being sold at an asking price of: {item['price']}.
-            Examine the photo for physical evidence proving this object is an authentic historical asset worth over 1000% of this price.
+            # Extract image IDs and post URLs directly from the main index list map
+            # This allows us to find images for dozens of items in 1 single proxy call
+            post_links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[a-z]+/d/[^"]+\.html)"', html)
+            img_ids = re.findall(r'data-id="([A-Za-z0-9_]+)"', html)
             
-            Respond strictly in this template format:
-            TARGET COMPLETION: [YES or NO]
-            ESTIMATED VALUE: [Provide currency range based on visual authentication]
-            PROBABLE ROI: [X% or Low]
-            VISUAL PROOF: [Provide 1-2 analytical sentences identifying specific design traits, era, maker marks, or material composition seen in the image]"""
+            unique_links = list(set(post_links))
             
-            try:
-                ai_res = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=[img_obj, prompt],
-                    config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
-                )
+            if not unique_links:
+                return output_report + "No active category listings found in this sweep cycle. Retry shortly."
+
+            client = genai.Client(api_key=api_key)
+            sys_instruction = "You are an antiquarian expert. Review item images to flag misidentified treasures worth >1000% of standard yard-sale prices."
+
+            # Batch process the first 4 active listings found in the live stream
+            for i, link in enumerate(unique_links[:4]):
+                url_slug = link.split('/')[-1].replace('.html', '').replace('-', ' ')
+                title_guess = re.sub(r'^\d+\s*', '', url_slug).title()
                 
-                label = "DEMO ITEM" if item["is_demo"] else "LIVE FIND"
-                output_report += f"🔍 [{label}]: {item['title']} (Asking: {item['price']})\n{ai_res.text}\n🔗 Source: {item['link']}\n{'-'*40}\n"
-            except Exception as e:
-                output_report += f"🔍 ITEM: {item['title']} -> Vision appraisal module failed: {str(e)}\n"
+                # Construct the thumb URL using the index ID map
+                img_url = f"https://images.craigslist.org/{img_ids[i]}_300x300.jpg" if i < len(img_ids) else None
+                
+                if img_url:
+                    try:
+                        img_res = requests.get(img_url, timeout=10)
+                        if img_res.status_code == 200:
+                            prompt = f"Analyze the visual structure of this item listing: '{title_guess}'. Does it possess historical hallmarks, maker characteristics, or material compositions indicating it is worth >1000% of a casual yard sale value? Reply strictly as: ROI POTENTIAL: [High/Low] - REASON: [1 sentence]."
+                            
+                            ai_res = client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=[
+                                    types.Part.from_bytes(data=img_res.content, mime_type="image/jpeg"),
+                                    prompt
+                                ],
+                                config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
+                            )
+                            
+                            # Only display items flagged with High Valuation Potential to keep your feed clean
+                            if "High" in ai_res.text:
+                                output_report += f"🔥 HIGH ROI TARGET DISCOVERED:\n📦 {title_guess}\n📊 {ai_res.text}\n🔗 Link: {link}\n{'-'*40}\n"
+                            else:
+                                output_report += f"📁 Scanned: {title_guess} -> Low ROI potential detected.\n"
+                    except Exception:
+                        pass
         else:
-            label = "DEMO ITEM" if item["is_demo"] else "LIVE FIND"
-            output_report += f"🔍 [{label}]: {item['title']} (Asking: {item['price']})\nSkipped: Image gallery asset links unextractable.\n🔗 {item['link']}\n{'-'*40}\n"
+            output_report += f"Craigslist Connection Blocked: Status {response.status_code}\n"
+    except Exception as e:
+        output_report += f"Pipeline Execution Failure: {e}\n"
 
     return output_report
 
