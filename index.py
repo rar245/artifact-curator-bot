@@ -1,6 +1,7 @@
 import os
 import re
 import io
+import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from PIL import Image
@@ -13,63 +14,69 @@ def run_scraper_pipeline():
     if not api_key:
         return "⚠️ Configuration Missing: GEMINI_API_KEY environment variable not found on Vercel."
 
-    # 🗺️ Target the official, unblocked RSS Feed for Long Island Garage / Moving / Estate Sales
     region = "longisland"
     rss_url = f"https://{region}.craigslist.org/search/gms?format=rss"
     
-    output_report = f"📸 BULLETPROOF VISUAL SCANNER ONLINE ({region} Garage & Moving Sale Stream)...\n\n"
+    output_report = f"📸 UNCAPPED HIGH-THROUGHPUT ARBITRAGE SCANNER ONLINE ({region} Feed Stream)...\n\n"
     
     try:
-        # Fetching directly from the public RSS feed avoids proxy layers completely
         response = requests.get(rss_url, timeout=20)
         if response.status_code == 200:
-            xml_content = response.text
+            xml_raw = response.text
+            xml_clean = re.sub(r'xmlns="[^"]+"', '', xml_raw)
+            xml_clean = re.sub(r'xmlns:[^=]+="[^"]+"', '', xml_clean)
             
-            # Extract live post elements using clean text boundaries
-            items = xml_content.split('<item')[1:]
+            try:
+                root = ET.fromstring(xml_clean)
+                items = root.findall('.//item')
+            except Exception as parse_error:
+                return output_report + f"⚠️ XML Parse Failure: {parse_error}"
             
             if not items:
-                return output_report + "📡 Feed loaded successfully, but zero active listings are posted right now. Re-scan shortly!"
+                return output_report + "📡 Feed parsed successfully, but 0 active items found right now."
 
             client = genai.Client(api_key=api_key)
             sys_instruction = "You are an antiquarian expert. Review item images to flag misidentified treasures worth >1000% of standard yard-sale prices."
 
-            items_processed = 0
+            # 🔥 THE CONSTRAINT HAS BEEN LIFTED: The engine will now ingest the entire feed array
             for item in items:
-                if items_processed >= 4: # Limit visual evaluations to top 4 to manage API usage
-                    break
+                link_el = item.find('link')
+                title_el = item.find('title')
                 
-                # Clean text extraction for link, title, and images from the RSS block
-                link_match = re.search(r'<link>(.*?)</link>', item)
-                title_match = re.search(r'<title>(.*?)</title>', item)
-                img_match = re.search(r'enc:encstring="([A-Za-z0-9_]+)"', item) # Grabs the raw image token
-                
-                if not link_match or not title_match:
+                if link_el is None or title_el is None:
                     continue
                     
-                link = link_match.group(1).strip()
-                title = title_match.group(1).strip()
+                link = link_el.text.strip() if link_el.text else ""
+                title = title_el.text.strip() if title_el.text else ""
                 
-                # Clean up pricing layouts if present in the RSS title string (e.g. "Vintage Desk - $40")
+                if not link or not title:
+                    continue
+                
+                # 🛠️ PRE-FILTER TRIAGE: Instantly skip obvious non-arbitrage assets to save execution time
+                lowercase_title = title.lower()
+                junk_keywords = ["clothes", "clothing", "shoes", "dvd", "dvds", "tires", "mower", "stroller"]
+                if any(keyword in lowercase_title for keyword in junk_keywords):
+                    continue  # Bypasses the AI call entirely for junk items
+
                 price_search = re.search(r'\$(\d+)', title)
                 price = f"${price_search.group(1)}" if price_search else "$Unpriced"
                 
-                # Reconstruct the direct photo image URL if a token exists
                 img_url = None
-                if img_match:
-                    img_id = img_match.group(1)
-                    img_url = f"https://images.craigslist.org/{img_id}_300x300.jpg"
+                enclosure = item.find('.//enclosure')
+                if enclosure is not None and 'resource' in enclosure.attrib:
+                    img_url = enclosure.attrib['resource']
                 else:
-                    # Secondary regex check looking for raw media asset tags inside the XML structure
-                    media_match = re.search(r'url="(https://images\.craigslist\.org/[^"]+)"', item)
+                    item_str = ET.tostring(item, encoding='utf-8').decode('utf-8')
+                    media_match = re.search(r'url=["\'](https://images\.craigslist\.org/[^"\']+)["\']', item_str)
                     if media_match:
                         img_url = media_match.group(1)
 
                 if img_url:
                     try:
-                        img_res = requests.get(img_url, timeout=10)
+                        high_res_url = re.sub(r'_\d+x\d+\.jpg$', '_600x450.jpg', img_url)
+                        img_res = requests.get(high_res_url, timeout=4) # Tight network timeout to prevent lockups
+                        
                         if img_res.status_code == 200:
-                            # Normalize picture matrix shapes via Pillow
                             img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
                             
                             prompt = f"Analyze the visual structure of this item listing: '{title}' being sold for {price}. Does it possess historical hallmarks, maker characteristics, or material compositions indicating it is worth >1000% of its current value? Reply strictly as: ROI POTENTIAL: [High/Low] - REASON: [1 sentence]."
@@ -84,14 +91,12 @@ def run_scraper_pipeline():
                                 output_report += f"🔥 HIGH ROI TARGET DISCOVERED:\n📦 {title}\n📊 {ai_res.text}\n🔗 Link: {link}\n{'-'*40}\n"
                             else:
                                 output_report += f"📁 Scanned: {title} -> Low ROI potential detected.\n"
-                            
-                            items_processed += 1
                     except Exception:
-                        pass
+                        pass # Protects the main loop loop so a single failing image won't crash the program
         else:
-            output_report += f"Craigslist Data Stream Unavailable: HTTP Status {response.status_code}\n"
+            output_report += f"Data stream response dropped: HTTP {response.status_code}\n"
     except Exception as e:
-        output_report += f"Pipeline Execution Interrupted: {e}\n"
+        output_report += f"Execution interrupted: {e}\n"
 
     return output_report
 
