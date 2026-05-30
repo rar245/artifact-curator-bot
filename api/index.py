@@ -1,5 +1,5 @@
 import os
-import xml.etree.ElementTree as ET
+import re
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
 from google import genai
@@ -12,48 +12,49 @@ def run_scraper_pipeline():
     if not api_key:
         return "Missing GEMINI_API_KEY configuration on Vercel."
 
-    # Using the RSS endpoint format which has lighter security restrictions
+    # Using standard HTML layout endpoint
     region = "vermont"
     search_query = "estate old antique"
-    url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}&format=rss"
+    url = f"https://{region}.craigslist.org/search/sss?query={search_query.replace(' ', '+')}"
     
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     
     try:
-        # Requesting the RSS XML payload using standard browser emulation
-        response = requests.get(url, impersonate="chrome", proxies=proxies, timeout=15)
+        # Requesting standard HTML layouts using an updated Chrome desktop footprint
+        response = requests.get(url, impersonate="chrome110", proxies=proxies, timeout=15)
         if response.status_code != 200:
-            return f"Feed sync paused. Status code: {response.status_code}. Proxy Connected: {bool(proxy_url)}"
+            return f"HTML Sync Paused. Status code: {response.status_code}. Proxy Connected: {bool(proxy_url)}"
     except Exception as e:
         return f"Network sync failure: {str(e)}"
 
-    # Parse the incoming RSS XML structure
-    namespaces = {
-        'rdf': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#', 
-        'default': 'http://purl.org/rss/1.0/'
-    }
-    
-    try:
-        root = ET.fromstring(response.content)
-        items = root.findall('.//default:item', namespaces)
-    except Exception as e:
-        return f"Data reading error: {str(e)}"
+    # Parse basic listings from HTML using clean text regular expressions
+    html_content = response.text
+    titles = re.findall(r'class="posting-title"[^>]*>(.*?)<\/a>', html_content)
+    links = re.findall(r'href="(https://[a-z]+\.craigslist\.org/[^"]+)" class="posting-title"', html_content)
 
-    if not items:
-        return f"Successfully synced with {region} RSS feed, but no active items matched your exact keywords right now."
+    # Fallback to Mock Data to let you see your Gemini brain work if Craigslist is still blocking the IP
+    if not titles:
+        output_report = f"⚠️ Network block detected (403 or empty HTML parsing). Running Mock Pipeline to verify Gemini Brain...\n\n"
+        items_to_analyze = [
+            {"title": "Old heavy metal sword - $40", "desc": "Found this clearing out my grandpas old garage trunk. It has some rusty looking engravings near the handle and some weird Roman numerals (MDCCXCI maybe?). Very heavy, could use a good polish. Just want it gone. Cash only.", "link": "#"},
+            {"title": "Ancient dusty book with leather cover - $25", "desc": "Selling an old leather bound book. Pages are yellowed and some are loose. Looks like it is written in old Latin or something. Dated 1724 on the first page. Found in a box from an estate sale.", "link": "#"}
+        ]
+    else:
+        output_report = f"📡 SUCCESS! Pulled live HTML data from {region}. Processing findings...\n\n"
+        items_to_analyze = []
+        for i in range(min(3, len(titles))):
+            items_to_analyze.append({
+                "title": titles[i].strip(),
+                "desc": "Live item listing detail parsed from HTML search indexing.",
+                "link": links[i] if i < len(links) else ""
+            })
 
-    output_report = f"📡 SUCCESS! Synced live data from {region} feed. Processing findings...\n\n"
-    
     # Initialize the Gemini Curator client
     client = genai.Client(api_key=api_key)
     sys_instruction = "You are an expert museum curator. Identify rare, historically significant artifacts misidentified by oblivious sellers."
     
-    for item in items[:3]:
-        title = item.find('default:title', namespaces).text if item.find('default:title', namespaces) is not None else "Untitled"
-        desc = item.find('default:description', namespaces).text if item.find('default:description', namespaces) is not None else "No Description"
-        link = item.find('default:link', namespaces).text if item.find('default:link', namespaces) is not None else ""
-        
-        prompt = f"Analyze this item:\nTitle: {title}\nDescription: {desc}\n\nProvide output EXACTLY as:\nSCORE: [1-10]\nREASON: [1-2 sentences]"
+    for item in items_to_analyze:
+        prompt = f"Analyze this item:\nTitle: {item['title']}\nDescription: {item['desc']}\n\nProvide output EXACTLY as:\nSCORE: [1-10]\nREASON: [1-2 sentences]"
         
         try:
             ai_res = client.models.generate_content(
@@ -61,9 +62,9 @@ def run_scraper_pipeline():
                 contents=prompt,
                 config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.2)
             )
-            output_report += f"🔍 ITEM: {title}\n{ai_res.text}\n🔗 {link}\n{'-'*30}\n"
+            output_report += f"🔍 ITEM: {item['title']}\n{ai_res.text}\n🔗 {item['link']}\n{'-'*30}\n"
         except Exception as e:
-            output_report += f"🔍 ITEM: {title}\nAI Analysis Paused: {str(e)}\n\n"
+            output_report += f"🔍 ITEM: {item['title']}\nAI Analysis Paused: {str(e)}\n\n"
 
     return output_report
 
