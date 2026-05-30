@@ -1,13 +1,14 @@
 import os
 import re
+import io
 from http.server import BaseHTTPRequestHandler
 from curl_cffi import requests
+from PIL import Image
 from google import genai
 from google.genai import types
 
 def run_scraper_pipeline():
     api_key = os.environ.get("GEMINI_API_KEY")
-    # 🔐 Securely reading the token directly from Vercel's cloud environment keys
     bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
     if not api_key or not bee_key:
@@ -61,26 +62,31 @@ def run_scraper_pipeline():
     output_report = f"📸 VISUAL 1000% ROI APPRAISER ONLINE! Scouting {region} Classifieds...\n\n"
     
     for item in items_to_check:
-        img_data = None
+        img_obj = None
         
         if item["is_demo"]:
             try:
-                img_data = requests.get(item["link"]).content
-            except Exception:
-                pass
+                img_res = requests.get(item["link"], timeout=15)
+                if img_res.status_code == 200:
+                    # Parse image through Pillow to format bytes perfectly
+                    img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
+            except Exception as e:
+                print(f"Demo image load failed: {e}")
         else:
-            # Click directly into the listing detail page to grab the high-resolution photo asset
             detail_api_url = f"https://app.scrapingbee.com/api/v1/?key={bee_key}&url={item['link']}&render_js=false"
             try:
                 detail_res = requests.get(detail_api_url, timeout=20)
                 if detail_res.status_code == 200:
                     img_urls = re.findall(r'src="(https://images\.craigslist\.org/[^"]+\d+x\d+\.jpg)"', detail_res.text)
                     if img_urls:
-                        img_data = requests.get(img_urls[0], timeout=10).content
+                        raw_img = requests.get(img_urls[0], timeout=15)
+                        if raw_img.status_code == 200:
+                            # Verify and clean the image canvas layout
+                            img_obj = Image.open(io.BytesIO(raw_img.content)).convert("RGB")
             except Exception as e:
                 output_report += f"Error connecting to subpage layout: {e}\n"
 
-        if img_data:
+        if img_obj:
             prompt = f"""Review the item photo for listing: '{item['title']}' being sold at an asking price of: {item['price']}.
             Examine the photo for physical evidence proving this object is an authentic historical asset worth over 1000% of this price.
             
@@ -91,13 +97,11 @@ def run_scraper_pipeline():
             VISUAL PROOF: [Provide 1-2 analytical sentences identifying specific design traits, era, maker marks, or material composition seen in the image]"""
             
             try:
-                # 💡 FIX: Feeding raw network content bytes directly into data solves the encoding error
+                # 💡 FIX: Passing a native PIL Image object directly inside the contents array
+                # lets the SDK execute safe internal normalization, avoiding 400 errors entirely.
                 ai_res = client.models.generate_content(
                     model='gemini-2.5-flash',
-                    contents=[
-                        types.Part.from_bytes(data=img_data, mime_type="image/jpeg"),
-                        prompt
-                    ],
+                    contents=[img_obj, prompt],
                     config=types.GenerateContentConfig(system_instruction=sys_instruction, temperature=0.1)
                 )
                 
