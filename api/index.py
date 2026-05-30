@@ -12,7 +12,7 @@ def run_scraper_pipeline():
     bee_key = os.environ.get("SCRAPINGBEE_KEY")
     
     if not api_key or not bee_key:
-        return f"⚠️ Configuration Missing: Check Vercel Environment Variables. GEMINI_API_KEY found: {bool(api_key)}, SCRAPINGBEE_KEY found: {bool(bee_key)}"
+        return f"⚠️ Configuration Missing."
 
     region = "longisland"
     search_query = "antique vintage estate"
@@ -54,7 +54,6 @@ def run_scraper_pipeline():
             "is_demo": True
         }]
 
-    # Initialize Gemini Appraiser Brain
     client = genai.Client(api_key=api_key)
     sys_instruction = """You are an expert antiquarian and museum art appraiser. Your exclusive job is to evaluate item images to discover misidentified, extremely rare objects being sold for a fraction of their true worth. 
     Calculate value purely from structural clues, maker marks, material tells, or craftsmanship eras. Flag targets crossing 1000% ROI."""
@@ -68,7 +67,6 @@ def run_scraper_pipeline():
             try:
                 img_res = requests.get(item["link"], timeout=15)
                 if img_res.status_code == 200:
-                    # Parse image through Pillow to format bytes perfectly
                     img_obj = Image.open(io.BytesIO(img_res.content)).convert("RGB")
             except Exception as e:
                 print(f"Demo image load failed: {e}")
@@ -77,11 +75,23 @@ def run_scraper_pipeline():
             try:
                 detail_res = requests.get(detail_api_url, timeout=20)
                 if detail_res.status_code == 200:
-                    img_urls = re.findall(r'src="(https://images\.craigslist\.org/[^"]+\d+x\d+\.jpg)"', detail_res.text)
-                    if img_urls:
-                        raw_img = requests.get(img_urls[0], timeout=15)
+                    detail_html = detail_res.text
+                    
+                    # 💡 Updated 2026 Strategy: Look for raw Craigslist image IDs inside data blocks or gallery strings
+                    # Craigslist image IDs typically look like 3_0x0_0 or random 3b0b777a80b... strings
+                    img_ids = re.findall(r'images\.craigslist\.org/([A-Za-z0-9_]+)', detail_html)
+                    
+                    if not img_ids:
+                        # Secondary fallback extraction pattern looking for raw layout maps
+                        img_ids = re.findall(r'":"([0-9]:[A-Za-z0-9_]+)"', detail_html)
+                    
+                    if img_ids:
+                        # Clean up prefixes if present (e.g., "1:" from "1:00M0M_k88XwOzloiz")
+                        clean_id = img_ids[0].split(':')[-1]
+                        target_img_url = f"https://images.craigslist.org/{clean_id}_600x450.jpg"
+                        
+                        raw_img = requests.get(target_img_url, timeout=15)
                         if raw_img.status_code == 200:
-                            # Verify and clean the image canvas layout
                             img_obj = Image.open(io.BytesIO(raw_img.content)).convert("RGB")
             except Exception as e:
                 output_report += f"Error connecting to subpage layout: {e}\n"
@@ -97,8 +107,6 @@ def run_scraper_pipeline():
             VISUAL PROOF: [Provide 1-2 analytical sentences identifying specific design traits, era, maker marks, or material composition seen in the image]"""
             
             try:
-                # 💡 FIX: Passing a native PIL Image object directly inside the contents array
-                # lets the SDK execute safe internal normalization, avoiding 400 errors entirely.
                 ai_res = client.models.generate_content(
                     model='gemini-2.5-flash',
                     contents=[img_obj, prompt],
@@ -110,7 +118,7 @@ def run_scraper_pipeline():
             except Exception as e:
                 output_report += f"🔍 ITEM: {item['title']} -> Vision appraisal module failed: {str(e)}\n"
         else:
-            output_report += f"🔍 LIVE ITEM: {item['title']}\nSkipped: Image gallery asset links unextractable.\n🔗 {item['link']}\n{'-'*40}\n"
+            output_report += f"🔍 LIVE ITEM: {item['title']} (Asking: {item['price']})\nSkipped: Image gallery asset links unextractable.\n🔗 {item['link']}\n{'-'*40}\n"
 
     return output_report
 
